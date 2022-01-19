@@ -4,7 +4,9 @@ import enum
 import os
 from asyncio import subprocess
 from subprocess import Popen
-from typing import Dict, List, Literal, Optional, Tuple, Union, cast, overload
+from typing import Dict, List, Literal, Optional, Tuple, cast, overload
+
+from pyjava.util import find_java_executable
 
 _java_popen: Optional[Popen[str]] = None
 
@@ -25,15 +27,6 @@ def _maybe_init() -> Popen:
     if _java_popen is None:
         return init()
     return _java_popen
-
-
-def _find_java() -> str:
-    if 'JAVA_HOME' in os.environ:
-        JAVA_HOME = os.environ['JAVA_HOME']
-        java_executable = os.path.join(JAVA_HOME, 'bin', 'java')
-        if os.path.isfile(java_executable):
-            return java_executable
-    return 'java'
 
 
 _DIGIT_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz'
@@ -171,7 +164,7 @@ def init(
 ) -> Popen:
     global _java_popen
     if java_executable is None:
-        java_executable = _find_java()
+        java_executable = find_java_executable('java')
     if class_path is None:
         class_path = []
     class_path.insert(1, os.path.dirname(__file__))
