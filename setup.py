@@ -1,4 +1,5 @@
 import subprocess
+import sys
 
 from setuptools import setup
 
@@ -11,6 +12,9 @@ ARGS = [
 ]
 print('Running javac with the following arguments:', ' '.join(repr(arg) for arg in ARGS))
 subprocess.check_call(ARGS)
+
+if '--no-setup' in sys.argv:
+    sys.exit()
 
 # with open('README.md') as fp:
 #     LONG_DESCRIPTION = fp.read()

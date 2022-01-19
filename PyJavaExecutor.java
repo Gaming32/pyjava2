@@ -1,35 +1,66 @@
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 public class PyJavaExecutor {
     private static final PrintStream DIRECT_OUT = System.out;
 
-    private static enum Command {
-        PRINT_OUT;
+    private static enum Py2JCommand {
+        SHUTDOWN,
+        GET_CLASS;
 
         final char COMMAND_CHAR;
 
-        Command() {
+        Py2JCommand() {
             COMMAND_CHAR = Integer.toString(ordinal(), 36).charAt(0);
         }
     }
 
-    private static final class SystemOutOverwrite extends PrintStream {
-        public SystemOutOverwrite() {
-            super(DIRECT_OUT);
+    private static enum J2PyCommand {
+        SHUTDOWN,
+        PRINT_OUT,
+        INT_RESULT,
+        ERROR_RESULT;
+
+        final char COMMAND_CHAR;
+
+        J2PyCommand() {
+            COMMAND_CHAR = Integer.toString(ordinal(), 36).charAt(0);
+        }
+    }
+
+    private static final class OutputManager extends PrintStream {
+        public OutputManager() {
+            super(DIRECT_OUT, true, StandardCharsets.ISO_8859_1);
         }
 
-        private void write(Object s, boolean newLine) {
-            StringBuilder fullCommand = new StringBuilder().append(Command.PRINT_OUT.COMMAND_CHAR);
-            String lengthString = Integer.toString(
+        void printDirect(String s) {
+            super.print(s);
+        }
+
+        void writeCommand(J2PyCommand command) {
+            super.print(command.COMMAND_CHAR);
+            super.flush();
+        }
+
+        void writeInt(int i, J2PyCommand command) {
+            final StringBuilder fullCommand = new StringBuilder(5).append(command.COMMAND_CHAR);
+            encodeInt(fullCommand, i);
+            super.print(fullCommand);
+            super.flush();
+        }
+
+        void writeStringOrChars(Object s, boolean newLine, J2PyCommand command) {
+            final StringBuilder fullCommand = new StringBuilder().append(command.COMMAND_CHAR);
+            encodeInt(fullCommand,
                 (s instanceof String ?
                     ((String)s).length() :
                     ((char[])s).length
-                ) + (newLine ? System.lineSeparator().length() : 0), 32
+                ) + (newLine ? System.lineSeparator().length() : 0)
             );
-            for (int i = lengthString.length(); i < 4; i++) {
-                fullCommand.append('0');
-            }
-            fullCommand.append(lengthString);
             if (s instanceof String) {
                 fullCommand.append((String)s);
             } else {
@@ -38,15 +69,19 @@ public class PyJavaExecutor {
             if (newLine) {
                 fullCommand.append(System.lineSeparator());
             }
-            DIRECT_OUT.print(fullCommand);
+            final String finalOutput = fullCommand.toString();
+            super.print(finalOutput);
+            if (!newLine && !finalOutput.endsWith(System.lineSeparator())) {
+                super.flush();
+            }
         }
 
         private void write(Object s) {
-            write(s, false);
+            writeStringOrChars(s, false, J2PyCommand.PRINT_OUT);
         }
 
         private void writeln(Object s) {
-            write(s, true);
+            writeStringOrChars(s, true, J2PyCommand.PRINT_OUT);
         }
 
         @Override
@@ -96,7 +131,7 @@ public class PyJavaExecutor {
 
         @Override
         public void println() {
-            write("", true);
+            writeStringOrChars("", true, J2PyCommand.PRINT_OUT);
         }
 
         @Override
@@ -145,8 +180,63 @@ public class PyJavaExecutor {
         }
     }
 
-    public static void main(String[] args) {
-        System.setOut(new SystemOutOverwrite());
-        System.out.println("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.");
+    private static StringBuilder encodeInt(StringBuilder result, int i) {
+        String s = Integer.toString(i, 32);
+        for (int j = s.length(); j < 4; j++) {
+            result.append('0');
+        }
+        return result.append(s);
+    }
+
+    private static String encodeInt(int i) {
+        return encodeInt(new StringBuilder(4), i).toString();
+    }
+
+    private static int decodeInt(String s) {
+        return Integer.parseInt(s, 32);
+    }
+
+    private static int decodeInt(InputStream in) throws IOException {
+        byte[] buf = new byte[4];
+        int n;
+        if ((n = in.read(buf)) != 4) {
+            throw new RuntimeException("Invalid input length " + n);
+        }
+        return decodeInt(new String(buf, StandardCharsets.ISO_8859_1));
+    }
+
+    private static String readString(InputStream in) throws IOException {
+        byte[] buf = new byte[decodeInt(in)];
+        int n;
+        if ((n = in.read(buf)) != buf.length) {
+            throw new RuntimeException("Unexpected read length " + n + ". Expected " + buf.length + ".");
+        }
+        return new String(buf, StandardCharsets.ISO_8859_1);
+    }
+
+    public static void main(String[] args) throws Exception {
+        final OutputManager output = new OutputManager();
+        final List<Object> objects = new ArrayList<>();
+        System.setOut(output);
+        final Py2JCommand[] INPUT_COMMAND_UNIVERSE = Py2JCommand.values();
+        execLoop:
+        while (true) {
+            final int commandInt = Character.digit(System.in.read(), 36);
+            final Py2JCommand command = commandInt == -1 ? Py2JCommand.SHUTDOWN : INPUT_COMMAND_UNIVERSE[commandInt];
+            try {
+                switch (command) {
+                    case SHUTDOWN:
+                        break execLoop;
+                    case GET_CLASS: {
+                        objects.add(Class.forName(readString(System.in)));
+                        output.writeInt(objects.size() - 1, J2PyCommand.INT_RESULT);
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                output.writeStringOrChars(e.toString(), false, J2PyCommand.ERROR_RESULT);
+            }
+        }
+        output.writeCommand(J2PyCommand.SHUTDOWN);
     }
 }
