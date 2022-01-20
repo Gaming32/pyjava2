@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 public class PyJavaExecutor {
+    private static final boolean DEBUG = Boolean.getBoolean("pyjava.debug");
     private static final Class<?>[] DEFAULT_CLASSES = new Class<?>[] {
         // 8 bits
         byte.class,
@@ -280,6 +281,9 @@ public class PyJavaExecutor {
         while (true) {
             final int commandInt = Character.digit(System.in.read(), 36);
             final Py2JCommand command = commandInt == -1 ? Py2JCommand.SHUTDOWN : INPUT_COMMAND_UNIVERSE[commandInt];
+            if (DEBUG) {
+                System.err.println(command);
+            }
             try {
                 switch (command) {
                     case SHUTDOWN:

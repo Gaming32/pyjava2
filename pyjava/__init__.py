@@ -185,7 +185,8 @@ def _execute_command(command: Py2JCommand, *args):
 
 def init(
     java_executable: Optional[str] = None,
-    class_path: Optional[List[str]] = None
+    class_path: Optional[List[str]] = None,
+    debug: bool = False
 ) -> Popen:
     global _java_popen
     if java_executable is None:
@@ -193,12 +194,18 @@ def init(
     if class_path is None:
         class_path = []
     class_path.insert(1, os.path.dirname(__file__))
+    args = [java_executable]
+    if debug:
+        args.append('-Dpyjava.debug=true')
+    args.extend((
+        '-classpath', os.pathsep.join(class_path),
+        'PyJavaExecutor'
+    ))
+    if debug:
+        import shlex
+        print(*(shlex.quote(arg) for arg in args))
     _java_popen = Popen(
-        [
-            java_executable,
-            '-classpath', os.pathsep.join(class_path),
-            'PyJavaExecutor'
-        ],
+        args,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
