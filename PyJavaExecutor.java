@@ -5,8 +5,10 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.IdentityHashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 
 public class PyJavaExecutor {
     private static final Class<?>[] DEFAULT_CLASSES = new Class<?>[] {
@@ -24,19 +26,23 @@ public class PyJavaExecutor {
         double.class,
         // Other
         Object.class,
-        String.class
+        String.class,
+        Class.class
     };
     private static final PrintStream DIRECT_OUT = System.out;
 
     private static final List<Object> objects = new ArrayList<>();
     private static final Deque<Integer> freeSlots = new LinkedList<>();
+    private static final Map<Object, Integer> objectRefs = new IdentityHashMap<>();
 
     private static enum Py2JCommand {
         SHUTDOWN,
         GET_CLASS,
         FREE_OBJECT,
         GET_METHOD,
-        TO_STRING;
+        TO_STRING,
+        CREATE_STRING,
+        INVOKE_STATIC_METHOD;
 
         final char COMMAND_CHAR;
 
@@ -250,6 +256,10 @@ public class PyJavaExecutor {
     }
 
     private static int saveObject(Object obj) {
+        Integer refIndex = objectRefs.get(obj);
+        if (refIndex != null) {
+            return refIndex;
+        }
         int index;
         if (freeSlots.isEmpty()) {
             index = objects.size();
@@ -258,6 +268,7 @@ public class PyJavaExecutor {
             index = freeSlots.pollFirst();
             objects.set(index, obj);
         }
+        objectRefs.put(obj, index);
         return index;
     }
 
@@ -279,6 +290,7 @@ public class PyJavaExecutor {
                     }
                     case FREE_OBJECT: {
                         int index = decodeInt(System.in);
+                        objectRefs.remove(objects.get(index));
                         objects.set(index, null);
                         freeSlots.addLast(index);
                         output.writeCommand(J2PyCommand.VOID_RESULT);
@@ -299,8 +311,22 @@ public class PyJavaExecutor {
                         output.writeStringOrChars(objects.get(decodeInt(System.in)).toString(), false, J2PyCommand.STRING_RESULT);
                         break;
                     }
+                    case CREATE_STRING: {
+                        output.writeInt(saveObject(readString(System.in)), J2PyCommand.INT_RESULT);
+                        break;
+                    }
+                    case INVOKE_STATIC_METHOD: {
+                        Method meth = (Method)objects.get(decodeInt(System.in));
+                        Object[] methodArgs = new Object[decodeInt(System.in)];
+                        for (int i = 0; i < methodArgs.length; i++) {
+                            methodArgs[i] = objects.get(decodeInt(System.in));
+                        }
+                        output.writeInt(saveObject(meth.invoke(null, methodArgs)), J2PyCommand.INT_RESULT);
+                        break;
+                    }
                 }
             } catch (Exception e) {
+                e.printStackTrace();
                 output.writeStringOrChars(e.toString(), false, J2PyCommand.ERROR_RESULT);
             }
         }
