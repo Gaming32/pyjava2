@@ -99,6 +99,16 @@ def _write(*s: str) -> None:
     popen.stdin.flush()
 
 
+def _write_maybe_int(*s: Union[str, int], bit_size: int = 32) -> None:
+    popen = _maybe_init()
+    assert popen.stdin is not None
+    for v in s:
+        if isinstance(v, int):
+            v = _int_to_str(v, bit_size)
+        popen.stdin.write(v)
+    popen.stdin.flush()
+
+
 def _write_command(command: Py2JCommand) -> None:
     _write(command.command_char)
 
@@ -108,7 +118,7 @@ def _write_int(i: int, bit_size: int = 32) -> None:
 
 
 def _write_str(s: str) -> None:
-    _write(_int_to_str(len(s)), s)
+    _write_maybe_int(len(s), s)
 
 
 def _read_int() -> int:
@@ -159,11 +169,12 @@ def _execute_command(command: Py2JCommand, *args):
         class_index = cast(int, args[0])
         name = cast(str, args[1])
         types = cast(Sequence[ClassProxy], args[2])
-        _write_int(class_index)
-        _write_str(name)
-        _write_int(len(types))
-        for type in types:
-            _write_int(type.object_index)
+        _write_maybe_int(
+            class_index,
+            len(name), name,
+            len(types),
+            *(type.object_index for type in types)
+        )
     elif command == Py2JCommand.INVOKE_STATIC_METHOD:
         assert len(args) == 2
         method_index = cast(int, args[0])
@@ -175,7 +186,11 @@ def _execute_command(command: Py2JCommand, *args):
     popen = _maybe_init()
     assert popen.stdout is not None
     while True:
-        recv_command = J2PyCommand(int(popen.stdout.read(1), 36))
+        command_str = popen.stdout.read(1)
+        if command_str:
+            recv_command = J2PyCommand(int(command_str, 36))
+        else:
+            recv_command = J2PyCommand.SHUTDOWN
         if recv_command == J2PyCommand.ERROR_RESULT:
             raise JavaException(_read_str())
         elif recv_command == J2PyCommand.INT_RESULT:
@@ -188,6 +203,7 @@ def _execute_command(command: Py2JCommand, *args):
             _loaded_classes.clear()
             _loaded_methods.clear()
             _loaded_objects.clear()
+            popen.wait()
             return None
         elif recv_command == J2PyCommand.PRINT_OUT:
             print(_read_str())
