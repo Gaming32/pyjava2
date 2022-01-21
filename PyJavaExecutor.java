@@ -9,6 +9,7 @@ import java.util.IdentityHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.IntFunction;
 
 public class PyJavaExecutor {
     private static final boolean DEBUG = Boolean.getBoolean("pyjava.debug");
@@ -29,6 +30,15 @@ public class PyJavaExecutor {
         Object.class,
         String.class,
         Class.class
+    };
+    @SuppressWarnings("unchecked")
+    private static final IntFunction<Object>[] TO_PRIMITIVE = new IntFunction[] {
+        i -> Byte.valueOf((byte)i),
+        i -> i != 0 ? Boolean.TRUE : Boolean.FALSE,
+        i -> Short.valueOf((short)i),
+        i -> Character.valueOf((char)i),
+        i -> Integer.valueOf(i),
+        i -> Float.intBitsToFloat(i)
     };
     private static final PrintStream DIRECT_OUT = System.out;
 
@@ -273,6 +283,30 @@ public class PyJavaExecutor {
         return index;
     }
 
+    private static Object getObject(int index) throws Exception {
+        if (index < 0) {
+            switch (index) {
+                case -1:
+                case -2:
+                case -3:
+                case -4:
+                case -5:
+                case -6:
+                    return TO_PRIMITIVE[-index - 1].apply(decodeInt(System.in));
+                case -7:
+                    return Long.valueOf(((long)decodeInt(System.in) << 32) | decodeInt(System.in));
+                case -8:
+                    return Double.longBitsToDouble(((long)decodeInt(System.in) << 32) | decodeInt(System.in));
+            }
+            throw new IllegalArgumentException("Cannot get object from virtual index " + index);
+        }
+        return objects.get(index);
+    }
+
+    private static Object getObject() throws Exception {
+        return getObject(decodeInt(System.in));
+    }
+
     public static void main(String[] args) throws Exception {
         final OutputManager output = new OutputManager();
         System.setOut(output);
@@ -312,7 +346,7 @@ public class PyJavaExecutor {
                         break;
                     }
                     case TO_STRING: {
-                        output.writeStringOrChars(objects.get(decodeInt(System.in)).toString(), false, J2PyCommand.STRING_RESULT);
+                        output.writeStringOrChars(getObject().toString(), false, J2PyCommand.STRING_RESULT);
                         break;
                     }
                     case CREATE_STRING: {
@@ -323,7 +357,7 @@ public class PyJavaExecutor {
                         Method meth = (Method)objects.get(decodeInt(System.in));
                         Object[] methodArgs = new Object[decodeInt(System.in)];
                         for (int i = 0; i < methodArgs.length; i++) {
-                            methodArgs[i] = objects.get(decodeInt(System.in));
+                            methodArgs[i] = getObject();
                         }
                         output.writeInt(saveObject(meth.invoke(null, methodArgs)), J2PyCommand.INT_RESULT);
                         break;

@@ -3,11 +3,13 @@ import atexit
 import enum
 import os
 from asyncio import subprocess
+import struct
 from subprocess import Popen
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, cast, overload
+from typing import Any, Dict, Generic, Iterable, List, Literal, Optional, Sequence, Tuple, Type, TypeVar, Union, cast, overload
 
 from pyjava.util import find_java_executable
 
+_T = TypeVar('_T', int, float)
 _java_popen: Optional[Popen[str]] = None
 
 
@@ -58,45 +60,55 @@ class J2PyCommand(enum.IntEnum):
         return _DIGIT_CHARS[self]
 
 
-def _int_to_str(i: int) -> str:
+def _int_to_str(i: int, bit_size: int = 32) -> str:
     result = []
     if i < 0:
-        i += 1 << 32 # Make unsigned
-    while i:
+        i += 1 << bit_size # Make unsigned
+    bits_written = 0
+    while i and bits_written < bit_size:
         next = i >> 4
         result.append(_DIGIT_CHARS[i - (next << 4)])
         i = next
-    return ''.join(reversed(result)).zfill(8)
+        bits_written += 4
+    return ''.join(reversed(result)).zfill(bit_size >> 2)
 
 
-def _pyobject_to_jobject(obj: Any) -> 'AbstractObjectProxy':
+def _pyobject_to_jobject(obj: Any, preferred_type: Optional['ClassProxy'] = None) -> 'AbstractObjectProxy':
     if isinstance(obj, AbstractObjectProxy):
-        return obj
+        return obj # Everything is casted anyway, so we don't need to cast here
     elif isinstance(obj, str):
         return _get_proxied_object(_execute_command(Py2JCommand.CREATE_STRING, obj))
+    elif isinstance(obj, (int, float)):
+        if preferred_type is None or preferred_type == jObject:
+            return PrimitiveObjectProxy(
+                jint.object_index if isinstance(obj, int) else jdouble.object_index,
+                obj
+            )
+        elif preferred_type.object_index in (jfloat, jdouble):
+            return PrimitiveObjectProxy(preferred_type.object_index, float(obj))
+        elif 0 > preferred_type.object_index > jdouble.object_index:
+            return PrimitiveObjectProxy(preferred_type.object_index, int(obj))
     raise ValueError(f'Currently unsupported type: {type(obj)}')
 
 
+def _write(*s: str) -> None:
+    popen = _maybe_init()
+    assert popen.stdin is not None
+    for v in s:
+        popen.stdin.write(v)
+    popen.stdin.flush()
+
+
 def _write_command(command: Py2JCommand) -> None:
-    popen = _maybe_init()
-    assert popen.stdin is not None
-    popen.stdin.write(command.command_char)
-    popen.stdin.flush()
+    _write(command.command_char)
 
 
-def _write_int(i: int) -> None:
-    popen = _maybe_init()
-    assert popen.stdin is not None
-    popen.stdin.write(_int_to_str(i))
-    popen.stdin.flush()
+def _write_int(i: int, bit_size: int = 32) -> None:
+    _write(_int_to_str(i, bit_size))
 
 
 def _write_str(s: str) -> None:
-    popen = _maybe_init()
-    assert popen.stdin is not None
-    _write_int(len(s))
-    popen.stdin.write(s)
-    popen.stdin.flush()
+    _write(_int_to_str(len(s)), s)
 
 
 def _read_int() -> int:
@@ -159,7 +171,7 @@ def _execute_command(command: Py2JCommand, *args):
         _write_int(method_index)
         _write_int(len(method_args))
         for arg in method_args:
-            _write_int(arg.object_index)
+            arg.write()
     popen = _maybe_init()
     assert popen.stdout is not None
     while True:
@@ -231,11 +243,24 @@ class AbstractObjectProxy(abc.ABC):
             except Exception:
                 pass
 
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, AbstractObjectProxy):
+            return self.object_index == other.object_index
+        elif isinstance(other, int):
+            return self.object_index == other
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return self.object_index
+
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__} id={self.object_index}>'
 
     def java_to_string(self) -> str:
         return _execute_command(Py2JCommand.TO_STRING, self.object_index)
+
+    def write(self) -> None:
+        _write_int(self.object_index)
 
 
 class ClassProxy(AbstractObjectProxy):
@@ -270,7 +295,7 @@ class ClassProxy(AbstractObjectProxy):
     def get_static_method(self, name: str, *types: 'ClassProxy') -> 'MethodProxy':
         if (self, name) in _loaded_methods:
             return _loaded_methods[(self, name)]
-        return MethodProxy(self, name, _execute_command(Py2JCommand.GET_METHOD, self.object_index, name, types))
+        return MethodProxy(self, name, _execute_command(Py2JCommand.GET_METHOD, self.object_index, name, types), types)
 
 
 jbyte = ClassProxy('byte', -1)
@@ -314,11 +339,13 @@ class MethodProxy(AbstractObjectProxy):
     owner: ClassProxy
     name: str
     object_index: int
+    types: Sequence[ClassProxy]
 
-    def __init__(self, owner: ClassProxy, name: str, index: int) -> None:
+    def __init__(self, owner: ClassProxy, name: str, index: int, types: Sequence[ClassProxy]) -> None:
         self.name = name
         self.owner = owner
         self.object_index = index
+        self.types = types
         try:
             _loaded_methods[(owner, name)] = self
         except NameError:
@@ -343,8 +370,8 @@ class MethodProxy(AbstractObjectProxy):
 
     def invoke_static(self, *args: Any) -> AbstractObjectProxy:
         send_args: List[AbstractObjectProxy] = []
-        for arg in args:
-            send_args.append(_pyobject_to_jobject(arg))
+        for (arg, type) in zip(args, self.types):
+            send_args.append(_pyobject_to_jobject(arg, type))
         return _get_proxied_object(_execute_command(Py2JCommand.INVOKE_STATIC_METHOD, self.object_index, send_args))
 
 _loaded_methods: Dict[Tuple[ClassProxy, str], MethodProxy] = {}
@@ -381,6 +408,46 @@ def _get_proxied_object(id: int) -> ObjectProxy:
     if id in _loaded_objects:
         return _loaded_objects[id]
     return ObjectProxy(id)
+
+
+_FLOAT_STRUCT = struct.Struct('>f')
+_DOUBLE_STRUCT = struct.Struct('>d')
+
+class PrimitiveObjectProxy(AbstractObjectProxy, Generic[_T]):
+    value: _T
+
+    def __init__(self, type: int, value: _T) -> None:
+        self.object_index = type
+        self.value = value
+
+    def __del__(self) -> None:
+        pass # Override and do nothing
+
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, PrimitiveObjectProxy):
+            return self.object_index == other.object_index and self.value == other.value
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash((self.object_index, self.value))
+
+    def __repr__(self) -> str:
+        return f'<PrimitiveObjectProxy type={self.object_index} value={self.value}>'
+
+    def write(self) -> None:
+        _write_int(self.object_index)
+        if self.object_index < jfloat.object_index:
+            # Two words
+            if self.object_index == jdouble:
+                _write(_DOUBLE_STRUCT.pack(self.value).hex())
+            else:
+                _write_int(int(self.value), 64)
+        else:
+            # One word
+            if self.object_index == jfloat:
+                _write(_FLOAT_STRUCT.pack(self.value).hex())
+            else:
+                _write_int(int(self.value))
 
 
 atexit.register(quit)
