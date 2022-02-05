@@ -224,6 +224,7 @@ def init(
     class_path.insert(1, os.path.dirname(__file__))
     args = [java_executable]
     if debug:
+        args.append('-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,quiet=y,address=8000')
         args.append('-Dpyjava.debug=true')
     args.extend((
         '-classpath', os.pathsep.join(class_path),

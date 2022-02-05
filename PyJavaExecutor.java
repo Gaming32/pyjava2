@@ -92,7 +92,7 @@ public class PyJavaExecutor {
         }
 
         void writeInt(int i, J2PyCommand command) {
-            final StringBuilder fullCommand = new StringBuilder(5).append(command.COMMAND_CHAR);
+            final StringBuilder fullCommand = new StringBuilder(9).append(command.COMMAND_CHAR);
             encodeInt(fullCommand, i);
             super.print(fullCommand);
             super.flush();
