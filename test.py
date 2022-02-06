@@ -1,5 +1,6 @@
-import timeit
 import time
+import timeit
+from typing import cast
 
 import pyjava
 
@@ -27,5 +28,6 @@ print(my_array.java_to_string())
 
 string_length = pyjava.jString.get_method('length')
 
-world_text = array_get.invoke_static(my_array, 1)
-print(string_length.invoke_instance(world_text).java_to_string())
+world_text = cast(pyjava.ObjectProxy, array_get.invoke_static(my_array, 1))
+# print(string_length.invoke_instance(world_text).java_to_string())
+print(world_text.get_method('length')().java_to_string())

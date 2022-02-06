@@ -45,6 +45,7 @@ public class PyJavaExecutor {
     private static final List<Object> objects = new ArrayList<>();
     private static final Deque<Integer> freeSlots = new ArrayDeque<>();
     private static final Map<Object, Integer> objectRefs = new IdentityHashMap<>();
+    private static final Py2JCommand[] INPUT_COMMAND_UNIVERSE = Py2JCommand.values();
 
     private static enum Py2JCommand {
         SHUTDOWN,
@@ -54,7 +55,8 @@ public class PyJavaExecutor {
         TO_STRING,
         CREATE_STRING,
         INVOKE_STATIC_METHOD,
-        INVOKE_METHOD;
+        INVOKE_METHOD,
+        GET_OBJECT_CLASS;
 
         final char COMMAND_CHAR;
 
@@ -69,7 +71,8 @@ public class PyJavaExecutor {
         INT_RESULT,
         ERROR_RESULT,
         VOID_RESULT,
-        STRING_RESULT;
+        STRING_RESULT,
+        INT_STRING_PAIR_RESULT;
 
         final char COMMAND_CHAR;
 
@@ -100,7 +103,8 @@ public class PyJavaExecutor {
         }
 
         void writeStringOrChars(Object s, boolean newLine, J2PyCommand command) {
-            final StringBuilder fullCommand = new StringBuilder().append(command.COMMAND_CHAR);
+            final StringBuilder fullCommand = new StringBuilder();
+            if (command != null) fullCommand.append(command.COMMAND_CHAR);
             encodeInt(fullCommand,
                 (s instanceof String ?
                     ((String)s).length() :
@@ -315,7 +319,9 @@ public class PyJavaExecutor {
     public static void main(String[] args) throws Exception {
         final OutputManager output = new OutputManager();
         System.setOut(output);
-        final Py2JCommand[] INPUT_COMMAND_UNIVERSE = Py2JCommand.values();
+        for (int i = 0; i < DEFAULT_CLASSES.length; i++) {
+            objectRefs.put(DEFAULT_CLASSES[i], -i - 1);
+        }
         execLoop:
         while (true) {
             final int commandInt = Character.digit(System.in.read(), 36);
@@ -376,6 +382,11 @@ public class PyJavaExecutor {
                         }
                         output.writeInt(saveObject(meth.invoke(instance, methodArgs)), J2PyCommand.INT_RESULT);
                         break;
+                    }
+                    case GET_OBJECT_CLASS: {
+                        Class<?> klass = getObject().getClass();
+                        output.writeInt(saveObject(klass), J2PyCommand.INT_STRING_PAIR_RESULT);
+                        output.writeStringOrChars(klass.getName(), false, null);
                     }
                 }
             } catch (Exception e) {

@@ -5,12 +5,14 @@ import os
 from asyncio import subprocess
 import struct
 from subprocess import Popen
-from typing import Any, Dict, Generic, Iterable, List, Literal, Optional, Sequence, Tuple, Type, TypeVar, Union, cast, overload
+from typing import Any, Callable, Dict, Generic, Iterable, List, Literal, Optional, Sequence, Tuple, Type, TypeVar, Union, cast, overload
 
 from pyjava.util import find_java_executable
 
 _T = TypeVar('_T', int, float)
 _java_popen: Optional[Popen[str]] = None
+
+INTEGER_MAX_VALUE = (1 << 31) - 1
 
 
 class JavaException(Exception):
@@ -42,6 +44,7 @@ class Py2JCommand(enum.IntEnum):
     CREATE_STRING = 5
     INVOKE_STATIC_METHOD = 6
     INVOKE_METHOD = 7
+    GET_OBJECT_CLASS = 8
 
     @property
     def command_char(self) -> str:
@@ -55,6 +58,7 @@ class J2PyCommand(enum.IntEnum):
     ERROR_RESULT = 3
     VOID_RESULT = 4
     STRING_RESULT = 5
+    INT_STRING_PAIR_RESULT = 6
 
     @property
     def command_char(self) -> str:
@@ -129,7 +133,10 @@ def _write_str(s: str) -> None:
 def _read_int() -> int:
     popen = _maybe_init()
     assert popen.stdout is not None
-    return int(popen.stdout.read(8), 16)
+    value = int(popen.stdout.read(8), 16)
+    if value > INTEGER_MAX_VALUE:
+        value -= 1 << 32
+    return value
 
 
 def _read_str() -> str:
@@ -162,13 +169,16 @@ def _execute_command(command: Literal[Py2JCommand.INVOKE_STATIC_METHOD], method_
 @overload
 def _execute_command(command: Literal[Py2JCommand.INVOKE_METHOD], method_index: int, object_index: int, method_args: Sequence['AbstractObjectProxy']) -> int: ...
 
+@overload
+def _execute_command(command: Literal[Py2JCommand.GET_OBJECT_CLASS], id: int) -> Tuple[int, str]: ...
+
 def _execute_command(command: Py2JCommand, *args):
     _write_command(command)
     if command in (Py2JCommand.GET_CLASS, Py2JCommand.CREATE_STRING):
         assert len(args) == 1
         name_or_string = cast(str, args[0])
         _write_str(name_or_string)
-    elif command in (Py2JCommand.FREE_OBJECT, Py2JCommand.TO_STRING):
+    elif command in (Py2JCommand.FREE_OBJECT, Py2JCommand.TO_STRING, Py2JCommand.GET_OBJECT_CLASS):
         assert len(args) == 1
         index = cast(int, args[0])
         _write_int(index)
@@ -216,6 +226,7 @@ def _execute_command(command: Py2JCommand, *args):
             global _java_popen
             _java_popen = None
             _loaded_classes.clear()
+            _loaded_classes_by_id.clear()
             _loaded_methods.clear()
             _loaded_objects.clear()
             popen.wait()
@@ -224,6 +235,8 @@ def _execute_command(command: Py2JCommand, *args):
             print(_read_str())
         elif recv_command == J2PyCommand.STRING_RESULT:
             return _read_str()
+        elif recv_command == J2PyCommand.INT_STRING_PAIR_RESULT:
+            return _read_int(), _read_str()
 
 
 def init(
@@ -313,10 +326,8 @@ class ClassProxy(AbstractObjectProxy):
     def __init__(self, name: str, index: int) -> None:
         self.name = name
         self.object_index = index
-        try:
-            _loaded_classes[name] = self
-        except NameError:
-            pass # This is a default class
+        _loaded_classes[name] = self
+        _loaded_classes_by_id[index] = self
 
     def __str__(self) -> str:
         return self.name
@@ -329,6 +340,10 @@ class ClassProxy(AbstractObjectProxy):
             _loaded_classes.pop(self.name, None)
         except Exception:
             pass
+        try:
+            _loaded_classes_by_id.pop(self.object_index, None)
+        except Exception:
+            pass
         if _java_popen is not None:
             try:
                 _execute_command(Py2JCommand.FREE_OBJECT, self.object_index)
@@ -339,6 +354,9 @@ class ClassProxy(AbstractObjectProxy):
         if (self, name) in _loaded_methods:
             return _loaded_methods[(self, name)]
         return MethodProxy(self, name, _execute_command(Py2JCommand.GET_METHOD, self.object_index, name, types), types)
+
+_loaded_classes: Dict[str, ClassProxy] = {}
+_loaded_classes_by_id: Dict[int, ClassProxy] = {}
 
 
 jbyte = ClassProxy('byte', -1)
@@ -368,7 +386,6 @@ for _default_class in (
         jClass,
     ):
     _DEFAULT_CLASSES[_default_class.name] = _default_class
-_loaded_classes: Dict[str, ClassProxy] = {}
 
 def class_for_name(name: str) -> ClassProxy:
     if name in _DEFAULT_CLASSES:
@@ -376,6 +393,28 @@ def class_for_name(name: str) -> ClassProxy:
     if name in _loaded_classes:
         return _loaded_classes[name]
     return ClassProxy(name, _execute_command(Py2JCommand.GET_CLASS, name))
+
+def _class_by_id(id: int, name: str) -> ClassProxy:
+    if id in _loaded_classes_by_id:
+        return _loaded_classes_by_id[id]
+    return ClassProxy(name, id)
+
+
+class ObjectMethodProxy:
+    method: 'MethodProxy'
+    on: Optional[AbstractObjectProxy]
+
+    def __init__(self,
+            method: 'MethodProxy',
+            on: Optional[AbstractObjectProxy] = None
+        ) -> None:
+        self.method = method
+        self.on = on
+
+    def __call__(self, *args: Any) -> AbstractObjectProxy:
+        if self.on is None:
+            return self.method.invoke_static(*args)
+        return self.method.invoke_instance(self.on, *args)
 
 
 class MethodProxy(AbstractObjectProxy):
@@ -395,10 +434,7 @@ class MethodProxy(AbstractObjectProxy):
         self.owner = owner
         self.object_index = index
         self.types = types
-        try:
-            _loaded_methods[(owner, name)] = self
-        except NameError:
-            pass # This is a default class
+        _loaded_methods[(owner, name)] = self
 
     def __str__(self) -> str:
         return self.name
@@ -423,11 +459,17 @@ class MethodProxy(AbstractObjectProxy):
             send_args.append(_pyobject_to_jobject(arg, type))
         return _get_proxied_object(_execute_command(Py2JCommand.INVOKE_STATIC_METHOD, self.object_index, send_args))
 
+    def static_callable(self) -> ObjectMethodProxy:
+        return ObjectMethodProxy(self)
+
     def invoke_instance(self, on: AbstractObjectProxy, *args: Any) -> AbstractObjectProxy:
         send_args: List[AbstractObjectProxy] = []
         for (arg, type) in zip(args, self.types):
             send_args.append(_pyobject_to_jobject(arg, type))
         return _get_proxied_object(_execute_command(Py2JCommand.INVOKE_METHOD, self.object_index, on.object_index, send_args))
+
+    def instance_callable(self, on: AbstractObjectProxy) -> ObjectMethodProxy:
+        return ObjectMethodProxy(self, on)
 
 _loaded_methods: Dict[Tuple[ClassProxy, str], MethodProxy] = {}
 
@@ -442,7 +484,9 @@ class ObjectProxy(AbstractObjectProxy):
 
     def get_class(self) -> ClassProxy:
         if self._klass is None:
-            raise ValueError('No class known') # TODO: Get class through call
+            id, name = _execute_command(Py2JCommand.GET_OBJECT_CLASS, self.object_index)
+            self._klass = _class_by_id(id, name)
+            # raise ValueError('No class known') # TODO: Get class through call
         return self._klass
 
     def __del__(self) -> None:
@@ -456,6 +500,9 @@ class ObjectProxy(AbstractObjectProxy):
             except Exception:
                 pass
         del self._klass # Probably doesn't do anything lol
+
+    def get_method(self, name: str, *types: 'ClassProxy') -> ObjectMethodProxy:
+        return self.get_class().get_method(name, *types).instance_callable(self)
 
 _loaded_objects: Dict[int, ObjectProxy] = {}
 
