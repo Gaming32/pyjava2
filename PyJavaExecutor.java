@@ -53,7 +53,8 @@ public class PyJavaExecutor {
         GET_METHOD,
         TO_STRING,
         CREATE_STRING,
-        INVOKE_STATIC_METHOD;
+        INVOKE_STATIC_METHOD,
+        INVOKE_METHOD;
 
         final char COMMAND_CHAR;
 
@@ -364,6 +365,16 @@ public class PyJavaExecutor {
                             methodArgs[i] = getObject();
                         }
                         output.writeInt(saveObject(meth.invoke(null, methodArgs)), J2PyCommand.INT_RESULT);
+                        break;
+                    }
+                    case INVOKE_METHOD: {
+                        Method meth = (Method)objects.get(decodeInt(System.in));
+                        Object instance = objects.get(decodeInt(System.in));
+                        Object[] methodArgs = new Object[decodeInt(System.in)];
+                        for (int i = 0; i < methodArgs.length; i++) {
+                            methodArgs[i] = getObject();
+                        }
+                        output.writeInt(saveObject(meth.invoke(instance, methodArgs)), J2PyCommand.INT_RESULT);
                         break;
                     }
                 }

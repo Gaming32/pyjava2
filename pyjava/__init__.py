@@ -41,6 +41,7 @@ class Py2JCommand(enum.IntEnum):
     TO_STRING = 4
     CREATE_STRING = 5
     INVOKE_STATIC_METHOD = 6
+    INVOKE_METHOD = 7
 
     @property
     def command_char(self) -> str:
@@ -158,6 +159,9 @@ def _execute_command(command: Literal[Py2JCommand.CREATE_STRING], s: str) -> int
 @overload
 def _execute_command(command: Literal[Py2JCommand.INVOKE_STATIC_METHOD], method_index: int, method_args: Sequence['AbstractObjectProxy']) -> int: ...
 
+@overload
+def _execute_command(command: Literal[Py2JCommand.INVOKE_METHOD], method_index: int, object_index: int, method_args: Sequence['AbstractObjectProxy']) -> int: ...
+
 def _execute_command(command: Py2JCommand, *args):
     _write_command(command)
     if command in (Py2JCommand.GET_CLASS, Py2JCommand.CREATE_STRING):
@@ -183,8 +187,15 @@ def _execute_command(command: Py2JCommand, *args):
         assert len(args) == 2
         method_index = cast(int, args[0])
         method_args = cast(Sequence[ClassProxy], args[1])
-        _write_int(method_index)
-        _write_int(len(method_args))
+        _write_maybe_int(method_index, len(method_args))
+        for arg in method_args:
+            arg.write()
+    elif command == Py2JCommand.INVOKE_METHOD:
+        assert len(args) == 3
+        method_index = cast(int, args[0])
+        object_index = cast(int, args[1])
+        method_args = cast(Sequence[ClassProxy], args[2])
+        _write_maybe_int(method_index, object_index, len(method_args))
         for arg in method_args:
             arg.write()
     popen = _maybe_init()
@@ -324,7 +335,7 @@ class ClassProxy(AbstractObjectProxy):
             except Exception:
                 pass
 
-    def get_static_method(self, name: str, *types: 'ClassProxy') -> 'MethodProxy':
+    def get_method(self, name: str, *types: 'ClassProxy') -> 'MethodProxy':
         if (self, name) in _loaded_methods:
             return _loaded_methods[(self, name)]
         return MethodProxy(self, name, _execute_command(Py2JCommand.GET_METHOD, self.object_index, name, types), types)
@@ -372,8 +383,14 @@ class MethodProxy(AbstractObjectProxy):
     name: str
     object_index: int
     types: Sequence[ClassProxy]
+    on: Optional[AbstractObjectProxy]
 
-    def __init__(self, owner: ClassProxy, name: str, index: int, types: Sequence[ClassProxy]) -> None:
+    def __init__(self,
+            owner: ClassProxy,
+            name: str,
+            index: int,
+            types: Sequence[ClassProxy]
+        ) -> None:
         self.name = name
         self.owner = owner
         self.object_index = index
@@ -405,6 +422,12 @@ class MethodProxy(AbstractObjectProxy):
         for (arg, type) in zip(args, self.types):
             send_args.append(_pyobject_to_jobject(arg, type))
         return _get_proxied_object(_execute_command(Py2JCommand.INVOKE_STATIC_METHOD, self.object_index, send_args))
+
+    def invoke_instance(self, on: AbstractObjectProxy, *args: Any) -> AbstractObjectProxy:
+        send_args: List[AbstractObjectProxy] = []
+        for (arg, type) in zip(args, self.types):
+            send_args.append(_pyobject_to_jobject(arg, type))
+        return _get_proxied_object(_execute_command(Py2JCommand.INVOKE_METHOD, self.object_index, on.object_index, send_args))
 
 _loaded_methods: Dict[Tuple[ClassProxy, str], MethodProxy] = {}
 
