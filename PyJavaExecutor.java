@@ -3,10 +3,10 @@ import java.io.InputStream;
 import java.io.PrintStream;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.IdentityHashMap;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.IntFunction;
@@ -43,7 +43,7 @@ public class PyJavaExecutor {
     private static final PrintStream DIRECT_OUT = System.out;
 
     private static final List<Object> objects = new ArrayList<>();
-    private static final Deque<Integer> freeSlots = new LinkedList<>();
+    private static final Deque<Integer> freeSlots = new ArrayDeque<>();
     private static final Map<Object, Integer> objectRefs = new IdentityHashMap<>();
 
     private static enum Py2JCommand {
@@ -297,6 +297,10 @@ public class PyJavaExecutor {
                     return Long.valueOf(((long)decodeInt(System.in) << 32) | decodeInt(System.in));
                 case -8:
                     return Double.longBitsToDouble(((long)decodeInt(System.in) << 32) | decodeInt(System.in));
+                default:
+                    if (-index - 8 <= DEFAULT_CLASSES.length) {
+                        return DEFAULT_CLASSES[-index - 9];
+                    }
             }
             throw new IllegalArgumentException("Cannot get object from virtual index " + index);
         }

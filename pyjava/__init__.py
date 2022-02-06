@@ -74,7 +74,11 @@ def _int_to_str(i: int, bit_size: int = 32) -> str:
 
 
 def _pyobject_to_jobject(obj: Any, preferred_type: Optional['ClassProxy'] = None) -> 'AbstractObjectProxy':
-    if isinstance(obj, AbstractObjectProxy):
+    if isinstance(obj, ClassProxy):
+        if obj.object_index < 0:
+            return _ArbitraryTemporaryProxy(obj.object_index - 8)
+        return obj
+    elif isinstance(obj, AbstractObjectProxy):
         return obj # Everything is casted anyway, so we don't need to cast here
     elif isinstance(obj, str):
         return _get_proxied_object(_execute_command(Py2JCommand.CREATE_STRING, obj))
@@ -278,6 +282,17 @@ class AbstractObjectProxy(abc.ABC):
 
     def write(self) -> None:
         _write_int(self.object_index)
+
+
+class _ArbitraryTemporaryProxy(AbstractObjectProxy):
+    def __init__(self, ix: int) -> None:
+        self.object_index = ix
+
+    def java_to_string(self) -> str:
+        raise NotImplementedError
+
+    def __del__(self) -> None:
+        pass
 
 
 class ClassProxy(AbstractObjectProxy):
