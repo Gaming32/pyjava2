@@ -2,10 +2,12 @@ import abc
 import atexit
 import enum
 import os
-from asyncio import subprocess
 import struct
+from asyncio import subprocess
 from subprocess import Popen
-from typing import Any, Callable, Dict, Generic, Iterable, List, Literal, Mapping, Optional, Sequence, Tuple, Type, TypeVar, Union, cast, overload
+from typing import (Any, Callable, Dict, Generic, Iterable, List, Literal,
+                    Mapping, Optional, Sequence, Tuple, Type, TypeVar, Union,
+                    cast, overload)
 from weakref import WeakValueDictionary
 
 from pyjava.util import find_java_executable
