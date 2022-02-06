@@ -84,12 +84,14 @@ def _int_to_str(i: int, bit_size: int = 32) -> str:
 def _pyobject_to_jobject(obj: Any, preferred_type: Optional['ClassProxy'] = None) -> 'AbstractObjectProxy':
     if isinstance(obj, ClassProxy):
         if obj.object_index < 0:
-            return _ArbitraryTemporaryProxy(obj.object_index - 8)
+            return _ArbitraryTemporaryProxy(obj.object_index - 9)
         return obj
     elif isinstance(obj, AbstractObjectProxy):
         return obj # Everything is casted anyway, so we don't need to cast here
     elif isinstance(obj, str):
-        return _get_proxied_object(_execute_command(Py2JCommand.CREATE_STRING, obj))
+        result = _get_proxied_object(_execute_command(Py2JCommand.CREATE_STRING, obj))
+        assert result is not None
+        return result
     elif isinstance(obj, (int, float)):
         if preferred_type is None or preferred_type == jObject:
             return PrimitiveObjectProxy(
@@ -414,7 +416,7 @@ class ObjectMethodProxy:
         self.method = method
         self.on = on
 
-    def __call__(self, *args: Any) -> AbstractObjectProxy:
+    def __call__(self, *args: Any) -> Optional['ObjectProxy']:
         if self.on is None:
             return self.method.invoke_static(*args)
         return self.method.invoke_instance(self.on, *args)
@@ -456,7 +458,7 @@ class MethodProxy(AbstractObjectProxy):
             except Exception:
                 pass
 
-    def invoke_static(self, *args: Any) -> AbstractObjectProxy:
+    def invoke_static(self, *args: Any) -> Optional['ObjectProxy']:
         send_args: List[AbstractObjectProxy] = []
         for (arg, type) in zip(args, self.types):
             send_args.append(_pyobject_to_jobject(arg, type))
@@ -465,7 +467,7 @@ class MethodProxy(AbstractObjectProxy):
     def static_callable(self) -> ObjectMethodProxy:
         return ObjectMethodProxy(self)
 
-    def invoke_instance(self, on: AbstractObjectProxy, *args: Any) -> AbstractObjectProxy:
+    def invoke_instance(self, on: AbstractObjectProxy, *args: Any) -> Optional['ObjectProxy']:
         send_args: List[AbstractObjectProxy] = []
         for (arg, type) in zip(args, self.types):
             send_args.append(_pyobject_to_jobject(arg, type))
@@ -509,10 +511,14 @@ class ObjectProxy(AbstractObjectProxy):
 
 _loaded_objects: WeakValueDictionary[int, ObjectProxy] = WeakValueDictionary()
 
-def _get_proxied_object(id: int) -> ObjectProxy:
+def _get_proxied_object(id: Optional[int]) -> Optional[ObjectProxy]:
+    if id is None:
+        return None
     if id in _loaded_objects:
         return _loaded_objects[id]
     return ObjectProxy(id)
+
+NULL = ObjectProxy(-9)
 
 
 _FLOAT_STRUCT = struct.Struct('>f')

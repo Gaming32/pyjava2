@@ -20,6 +20,7 @@ array_set = array_class.get_method('set', pyjava.jObject, pyjava.jint, pyjava.jO
 array_get = array_class.get_method('get', pyjava.jObject, pyjava.jint)
 
 my_array = array_new_instance.invoke_static(pyjava.jString, 3)
+assert my_array is not None
 array_set.invoke_static(my_array, 0, 'hello')
 array_set.invoke_static(my_array, 1, 'world')
 array_set.invoke_static(my_array, 2, '123')
@@ -30,4 +31,6 @@ string_length = pyjava.jString.get_method('length')
 
 world_text = cast(pyjava.ObjectProxy, array_get.invoke_static(my_array, 1))
 # print(string_length.invoke_instance(world_text).java_to_string())
-print(world_text.get_method('length')().java_to_string())
+slen = world_text.get_method('length')()
+assert slen is not None
+print(slen.java_to_string())

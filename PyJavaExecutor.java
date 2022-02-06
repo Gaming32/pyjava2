@@ -9,6 +9,7 @@ import java.util.Deque;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.IntFunction;
 
 public class PyJavaExecutor {
@@ -302,9 +303,11 @@ public class PyJavaExecutor {
                     return Long.valueOf(((long)decodeInt(System.in) << 32) | decodeInt(System.in));
                 case -8:
                     return Double.longBitsToDouble(((long)decodeInt(System.in) << 32) | decodeInt(System.in));
+                case -9:
+                    return null;
                 default:
-                    if (-index - 8 <= DEFAULT_CLASSES.length) {
-                        return DEFAULT_CLASSES[-index - 9];
+                    if (-index - 9 <= DEFAULT_CLASSES.length) {
+                        return DEFAULT_CLASSES[-index - 10];
                     }
             }
             throw new IllegalArgumentException("Cannot get object from virtual index " + index);
@@ -322,6 +325,7 @@ public class PyJavaExecutor {
         for (int i = 0; i < DEFAULT_CLASSES.length; i++) {
             objectRefs.put(DEFAULT_CLASSES[i], -i - 1);
         }
+        objectRefs.put(null, -9); // null is always -9
         execLoop:
         while (true) {
             final int commandInt = Character.digit(System.in.read(), 36);
@@ -361,7 +365,7 @@ public class PyJavaExecutor {
                         break;
                     }
                     case TO_STRING: {
-                        output.writeStringOrChars(getObject().toString(), false, J2PyCommand.STRING_RESULT);
+                        output.writeStringOrChars(Objects.toString(getObject()), false, J2PyCommand.STRING_RESULT);
                         break;
                     }
                     case CREATE_STRING: {
@@ -393,12 +397,15 @@ public class PyJavaExecutor {
                         output.writeStringOrChars(klass.getName(), false, null);
                     }
                 }
+                if (DEBUG) {
+                    System.err.println();
+                }
             } catch (Exception e) {
+                if (DEBUG) {
+                    System.err.println(); // Finish line
+                }
                 e.printStackTrace();
                 output.writeStringOrChars(e.toString(), false, J2PyCommand.ERROR_RESULT);
-            }
-            if (DEBUG) {
-                System.err.println();
             }
         }
         output.writeCommand(J2PyCommand.SHUTDOWN);
