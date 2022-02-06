@@ -5,7 +5,8 @@ import os
 from asyncio import subprocess
 import struct
 from subprocess import Popen
-from typing import Any, Callable, Dict, Generic, Iterable, List, Literal, Optional, Sequence, Tuple, Type, TypeVar, Union, cast, overload
+from typing import Any, Callable, Dict, Generic, Iterable, List, Literal, Mapping, Optional, Sequence, Tuple, Type, TypeVar, Union, cast, overload
+from weakref import WeakValueDictionary
 
 from pyjava.util import find_java_executable
 
@@ -355,8 +356,8 @@ class ClassProxy(AbstractObjectProxy):
             return _loaded_methods[(self, name)]
         return MethodProxy(self, name, _execute_command(Py2JCommand.GET_METHOD, self.object_index, name, types), types)
 
-_loaded_classes: Dict[str, ClassProxy] = {}
-_loaded_classes_by_id: Dict[int, ClassProxy] = {}
+_loaded_classes: WeakValueDictionary[str, ClassProxy] = WeakValueDictionary()
+_loaded_classes_by_id: WeakValueDictionary[int, ClassProxy] = WeakValueDictionary()
 
 
 jbyte = ClassProxy('byte', -1)
@@ -471,7 +472,7 @@ class MethodProxy(AbstractObjectProxy):
     def instance_callable(self, on: AbstractObjectProxy) -> ObjectMethodProxy:
         return ObjectMethodProxy(self, on)
 
-_loaded_methods: Dict[Tuple[ClassProxy, str], MethodProxy] = {}
+_loaded_methods: WeakValueDictionary[Tuple[ClassProxy, str], MethodProxy] = WeakValueDictionary()
 
 
 class ObjectProxy(AbstractObjectProxy):
@@ -504,7 +505,7 @@ class ObjectProxy(AbstractObjectProxy):
     def get_method(self, name: str, *types: 'ClassProxy') -> ObjectMethodProxy:
         return self.get_class().get_method(name, *types).instance_callable(self)
 
-_loaded_objects: Dict[int, ObjectProxy] = {}
+_loaded_objects: WeakValueDictionary[int, ObjectProxy] = WeakValueDictionary()
 
 def _get_proxied_object(id: int) -> ObjectProxy:
     if id in _loaded_objects:

@@ -327,7 +327,7 @@ public class PyJavaExecutor {
             final int commandInt = Character.digit(System.in.read(), 36);
             final Py2JCommand command = commandInt == -1 ? Py2JCommand.SHUTDOWN : INPUT_COMMAND_UNIVERSE[commandInt];
             if (DEBUG) {
-                System.err.println(command);
+                System.err.print(command);
             }
             try {
                 switch (command) {
@@ -339,7 +339,11 @@ public class PyJavaExecutor {
                     }
                     case FREE_OBJECT: {
                         int index = decodeInt(System.in);
-                        objectRefs.remove(objects.get(index));
+                        Object toRemove = objects.get(index);
+                        if (DEBUG) {
+                            System.err.print(" " + toRemove);
+                        }
+                        objectRefs.remove(toRemove);
                         objects.set(index, null);
                         freeSlots.addLast(index);
                         output.writeCommand(J2PyCommand.VOID_RESULT);
@@ -392,6 +396,9 @@ public class PyJavaExecutor {
             } catch (Exception e) {
                 e.printStackTrace();
                 output.writeStringOrChars(e.toString(), false, J2PyCommand.ERROR_RESULT);
+            }
+            if (DEBUG) {
+                System.err.println();
             }
         }
         output.writeCommand(J2PyCommand.SHUTDOWN);
